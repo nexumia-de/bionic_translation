@@ -667,3 +667,10 @@ int bionic_pthread_atfork(void (*prepare)(void), void (*parent)(void), void (*ch
 {
 	return pthread_atfork(prepare, parent, child);
 }
+
+/* bionic's pthread_atfork in the NDK's libc.a calls this; the handlers are never
+ * unregistered when the library identified by dso is unloaded */
+int bionic___register_atfork(void (*prepare)(void), void (*parent)(void), void (*child)(void), void *dso)
+{
+	return pthread_atfork(prepare, parent, child);
+}

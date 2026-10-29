@@ -93,6 +93,12 @@ char *bionic___strcpy_chk(char *dest, const char *src, size_t dest_len)
 	return strcpy(dest, src);
 }
 
+char *bionic___strncat_chk(char *__restrict dest, const char *__restrict src,
+			   size_t len, size_t dest_len)
+{
+	return strncat(dest, src, len);
+}
+
 char * bionic___stpncpy_chk(char* __restrict dest, const char* __restrict src, size_t len, size_t dest_len) {
 	if (__builtin_expect(len > dest_len, 0)) {
 		fprintf(stderr, "stpncpy: prevented write past end of buffer");
