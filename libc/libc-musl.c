@@ -4,6 +4,7 @@
 #include <ftw.h>
 #include <glob.h>
 #include <locale.h>
+#include <pthread.h>
 #include <mntent.h>
 #include <stdarg.h>
 #include <stdint.h>
@@ -13,6 +14,7 @@
 #include <string.h>
 #include <sys/mman.h>
 #include <sys/resource.h>
+#include <sys/sendfile.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/vfs.h>
@@ -124,6 +126,16 @@ int bionic_fstat64(int filedes, struct stat *buf)
 int bionic_lstat64(const char *filename, struct stat *buf)
 {
 	return lstat(filename, buf);
+}
+
+int bionic_fstatat64(int dirfd, const char *pathname, struct stat *buf, int flags)
+{
+	return fstatat(dirfd, pathname, buf, flags);
+}
+
+ssize_t bionic_sendfile64(int out_fd, int in_fd, off_t *offset, size_t count)
+{
+	return sendfile(out_fd, in_fd, offset, count);
 }
 
 int bionic_statfs64(const char *file, struct statfs *buf)
@@ -697,6 +709,53 @@ int bionic_vfwscanf(FILE *stream, const wchar_t *template, va_list ap)
 int bionic_fwide(FILE *stream, int mode)
 {
 	return fwide(bionic_file_to_glibc_file(stream), mode);
+}
+
+/* musl has no __cxa_thread_atexit_impl, which libc++ (thread_local objects
+ * with destructors) needs. Run the destructors of a thread in reverse order
+ * of registration when it exits, through a pthread key. The main thread's
+ * are not run at exit(), and dso_symbol does not keep the library loaded. */
+struct thread_atexit {
+	void (*func)(void *);
+	void *obj;
+	struct thread_atexit *next;
+};
+
+static pthread_key_t thread_atexit_key;
+static pthread_once_t thread_atexit_once = PTHREAD_ONCE_INIT;
+
+static void thread_atexit_run(void *head)
+{
+	struct thread_atexit *entry = head;
+	while (entry) {
+		/* a destructor may register more, which then run first */
+		pthread_setspecific(thread_atexit_key, NULL);
+		while (entry) {
+			struct thread_atexit *next = entry->next;
+			entry->func(entry->obj);
+			free(entry);
+			entry = next;
+		}
+		entry = pthread_getspecific(thread_atexit_key);
+	}
+}
+
+static void thread_atexit_init(void)
+{
+	pthread_key_create(&thread_atexit_key, thread_atexit_run);
+}
+
+int bionic___cxa_thread_atexit_impl(void (*func)(void *), void *obj, void *dso_symbol)
+{
+	struct thread_atexit *entry = malloc(sizeof(*entry));
+	if (!entry)
+		return -1;
+	pthread_once(&thread_atexit_once, thread_atexit_init);
+	entry->func = func;
+	entry->obj = obj;
+	entry->next = pthread_getspecific(thread_atexit_key);
+	pthread_setspecific(thread_atexit_key, entry);
+	return 0;
 }
 
 #endif

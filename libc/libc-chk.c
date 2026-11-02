@@ -6,6 +6,7 @@
 // runtime implementations of _FORTIFY_SOURCE _chk functions (some with the checking removed)
 
 
+#include <poll.h>
 #include <sys/select.h>
 #include <sys/stat.h>
 
@@ -97,6 +98,28 @@ char *bionic___strncat_chk(char *__restrict dest, const char *__restrict src,
 			   size_t len, size_t dest_len)
 {
 	return strncat(dest, src, len);
+}
+
+int bionic___openat_2(int dirfd, const char *pathname, int flags)
+{
+	flags |= O_LARGEFILE;
+	return openat(dirfd, pathname, flags, 0);
+}
+
+int bionic___poll_chk(struct pollfd *fds, nfds_t nfds, int timeout, size_t fds_size)
+{
+	return poll(fds, nfds, timeout);
+}
+
+/* bionic's off_t is long: 32 bits on 32-bit targets, unlike musl's */
+ssize_t bionic___pread_chk(int fd, void *buf, size_t count, long offset, size_t buf_size)
+{
+	return pread(fd, buf, count, offset);
+}
+
+ssize_t bionic___readlink_chk(const char *path, char *buf, size_t size, size_t buf_size)
+{
+	return readlink(path, buf, size);
 }
 
 char * bionic___stpncpy_chk(char* __restrict dest, const char* __restrict src, size_t len, size_t dest_len) {
