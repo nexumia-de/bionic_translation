@@ -23,6 +23,15 @@ void libc_bio_set_apply_path_overrides_func(apply_path_overrides_func_type *func
 	apply_path_overrides_func = func;
 }
 
+/* for the stat family: returns the path to use, *to_free is set when it was allocated */
+const char *bionic_override_path(const char *path, char **to_free)
+{
+	char *new_path = (char *)path;
+
+	*to_free = (*apply_path_overrides_func)(&new_path) ? new_path : NULL;
+	return new_path;
+}
+
 /* open and fopen overrides */
 int bionic_open(char *path, int oflag, ...)
 {

@@ -111,11 +111,17 @@ int bionic_fseeko(FILE *stream, off_t offset, int whence)
 
 #endif
 
+const char *bionic_override_path(const char *path, char **to_free);
+
 /* since these are always 64bit on musl, the *64 versions don't necessarily exist */
 
 int bionic_stat64(const char *filename, struct stat *buf)
 {
-	return stat(filename, buf);
+	char *to_free;
+	int ret = stat(bionic_override_path(filename, &to_free), buf);
+
+	free(to_free);
+	return ret;
 }
 
 int bionic_fstat64(int filedes, struct stat *buf)
@@ -125,12 +131,21 @@ int bionic_fstat64(int filedes, struct stat *buf)
 
 int bionic_lstat64(const char *filename, struct stat *buf)
 {
-	return lstat(filename, buf);
+	char *to_free;
+	int ret = lstat(bionic_override_path(filename, &to_free), buf);
+
+	free(to_free);
+	return ret;
 }
 
 int bionic_fstatat64(int dirfd, const char *pathname, struct stat *buf, int flags)
 {
-	return fstatat(dirfd, pathname, buf, flags);
+	char *to_free = NULL;
+	/* overrides are for absolute paths */
+	int ret = fstatat(dirfd, pathname[0] == '/' ? bionic_override_path(pathname, &to_free) : pathname, buf, flags);
+
+	free(to_free);
+	return ret;
 }
 
 ssize_t bionic_sendfile64(int out_fd, int in_fd, off_t *offset, size_t count)
