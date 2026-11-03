@@ -191,6 +191,12 @@ void *bionic_dlsym(void *handle, const char *symbol)
 		}
 
 		set_dlerror(DL_ERR_SYMBOL_NOT_GLOBAL);
+	} else if (handle == RTLD_DEFAULT && (sym = dlsym(RTLD_DEFAULT, symbol))) {
+		/* on Android RTLD_DEFAULT also finds libc and the other system
+		 * libraries, which here are the host's (as for relocations) */
+		pthread_mutex_unlock(&apkenv_dl_lock);
+		verbose("RTLD_DEFAULT: found system version");
+		return wrapper_create((char *)symbol, sym);
 	} else
 		set_dlerror(DL_ERR_SYMBOL_NOT_FOUND);
 
