@@ -120,6 +120,8 @@ bionic___get_h_errno(void)
 	return &h_errno;
 }
 
+const char *bionic_override_path(const char *path, char **to_free);
+
 // this doesn't seem to be needed for 64bit glibc or musl
 // 32bit glibc seems to work without as well but it doesn't hurt
 #ifndef __LP64__
@@ -153,8 +155,10 @@ int bionic_stat(const char *restrict path, struct bionic_stat *restrict buf)
 {
 	verbose("%s", path);
 	struct stat native_stat;
+	char *to_free;
 
-	int ret = stat(path, &native_stat);
+	int ret = stat(bionic_override_path(path, &to_free), &native_stat);
+	free(to_free);
 	*buf = (struct bionic_stat) {
 		.st_dev = native_stat.st_dev,
 		.st_ino = native_stat.st_ino,
@@ -178,14 +182,22 @@ int bionic_stat(const char *restrict path, struct bionic_stat *restrict buf)
 int bionic_stat(const char *restrict path, struct stat *restrict buf)
 {
 	verbose("%s", path);
-	return stat(path, buf);
+	char *to_free;
+	int ret = stat(bionic_override_path(path, &to_free), buf);
+
+	free(to_free);
+	return ret;
 }
 #endif
 
 int bionic_lstat(const char *restrict path, struct stat *restrict buf)
 {
 	verbose("%s", path);
-	return lstat(path, buf);
+	char *to_free;
+	int ret = lstat(bionic_override_path(path, &to_free), buf);
+
+	free(to_free);
+	return ret;
 }
 
 int bionic_fstat(int fd, struct stat *buf)
@@ -197,7 +209,12 @@ int bionic_fstat(int fd, struct stat *buf)
 int bionic_fstatat(int dirfd, const char *pathname, void *buf, int flags)
 {
 	verbose("%d, %s", dirfd, pathname);
-	return fstatat(dirfd, pathname, buf, flags);
+	char *to_free = NULL;
+	/* overrides are for absolute paths */
+	int ret = fstatat(dirfd, pathname[0] == '/' ? bionic_override_path(pathname, &to_free) : pathname, buf, flags);
+
+	free(to_free);
+	return ret;
 }
 
 static void
