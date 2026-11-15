@@ -139,6 +139,24 @@ struct bionic_pthread_cleanup_t {
 // For handling static initialization.
 #define INIT_IF_NOT_MAPPED(x, init) do { if (!IS_MAPPED(x)) init(x); } while(0)
 
+/* Statically initialized objects (e.g. std::mutex, std::condition_variable) get their
+ * glibc object at first use. Several threads can get there at the same time for the same
+ * object; publish the new one only if nobody else did, so that all of them use the same
+ * one (two condition variables lose wakeups, two mutexes exclude nothing). The bionic
+ * types are only 4-byte aligned, so a lock instead of an 8-byte compare-and-swap. */
+static pthread_mutex_t lazy_init_lock = PTHREAD_MUTEX_INITIALIZER;
+
+static void publish_glibc(void *slot, void *expected, void *mem, size_t sz)
+{
+	pthread_mutex_lock(&lazy_init_lock);
+	bool unchanged = !memcmp(slot, &expected, sizeof(expected));
+	if (unchanged)
+		memcpy(slot, &mem, sizeof(mem));
+	pthread_mutex_unlock(&lazy_init_lock);
+	if (!unchanged)
+		munmap(mem, sz);
+}
+
 static bool is_mapped(void *mem, const size_t sz)
 {
 	const size_t ps = sysconf(_SC_PAGESIZE);
@@ -207,8 +225,11 @@ static void default_sem_init(bionic_sem_t *sem)
 {
 	// Apparently some android apps (hearthstone) do not call sem_init()
 	assert(sem);
-	sem->glibc = mmap(NULL, sizeof(*sem->glibc), PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
-	memset(sem->glibc, 0, sizeof(*sem->glibc));
+	void *expected;
+	memcpy(&expected, &sem->glibc, sizeof(expected));
+	void *mem = mmap(NULL, sizeof(*sem->glibc), PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
+	memset(mem, 0, sizeof(*sem->glibc));
+	publish_glibc(&sem->glibc, expected, mem, sizeof(*sem->glibc));
 }
 
 int bionic_sem_init(bionic_sem_t *sem, int pshared, unsigned int value)
@@ -271,8 +292,11 @@ static void default_rwlock_init(bionic_rwlock_t *rwlock)
 {
 	// Apparently some android apps/libs (Qt5) do not call pthread_rwlock_init()
 	assert(rwlock);
-	rwlock->glibc = mmap(NULL, sizeof(*rwlock->glibc), PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
-	memset(rwlock->glibc, 0, sizeof(*rwlock->glibc));
+	void *expected;
+	memcpy(&expected, &rwlock->glibc, sizeof(expected));
+	void *mem = mmap(NULL, sizeof(*rwlock->glibc), PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
+	memset(mem, 0, sizeof(*rwlock->glibc));
+	publish_glibc(&rwlock->glibc, expected, mem, sizeof(*rwlock->glibc));
 }
 
 int bionic_pthread_rwlock_init(bionic_rwlock_t *restrict rwlock, const bionic_rwlockattr_t *restrict attr)
@@ -464,8 +488,10 @@ static void default_pthread_mutex_init(bionic_mutex_t *mutex)
 		if (memcmp(&bionic_mutex_init_map[i].bionic, mutex, sizeof(*mutex)))
 			continue;
 
-		mutex->glibc = mmap(NULL, sizeof(*mutex->glibc), PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
-		memcpy(mutex->glibc, &bionic_mutex_init_map[i].glibc, sizeof(bionic_mutex_init_map[i].glibc));
+		void *expected = bionic_mutex_init_map[i].bionic.glibc;
+		void *mem = mmap(NULL, sizeof(*mutex->glibc), PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
+		memcpy(mem, &bionic_mutex_init_map[i].glibc, sizeof(bionic_mutex_init_map[i].glibc));
+		publish_glibc(&mutex->glibc, expected, mem, sizeof(*mutex->glibc));
 		return;
 	}
 
@@ -555,8 +581,11 @@ int bionic_pthread_condattr_setclock(bionic_condattr_t *attr, clockid_t clock_id
 static void default_pthread_cond_init(bionic_cond_t *cond)
 {
 	assert(cond);
-	cond->glibc = mmap(NULL, sizeof(*cond->glibc), PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
-	memset(cond->glibc, 0, sizeof(*cond->glibc));
+	void *expected;
+	memcpy(&expected, &cond->glibc, sizeof(expected));
+	void *mem = mmap(NULL, sizeof(*cond->glibc), PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
+	memset(mem, 0, sizeof(*cond->glibc));
+	publish_glibc(&cond->glibc, expected, mem, sizeof(*cond->glibc));
 }
 
 int bionic_pthread_cond_destroy(bionic_cond_t *cond)
