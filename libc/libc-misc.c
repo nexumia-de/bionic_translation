@@ -1,6 +1,7 @@
 #include <errno.h>
 #include <locale.h>
 #include <stdbool.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -38,6 +39,21 @@ int bionic___system_property_read(const struct prop_info *prop_info, char *name,
 	}
 
 	return strlen(value);
+}
+
+// no properties are emulated, so there are none to list
+int bionic___system_property_foreach(void (*propfn)(const struct prop_info *pi, void *cookie), void *cookie)
+{
+	return 0;
+}
+
+void bionic___system_property_read_callback(const struct prop_info *pi,
+                                            void (*callback)(void *cookie, const char *name, const char *value, uint32_t serial),
+                                            void *cookie)
+{
+	char value[PROP_VALUE_MAX];
+	bionic___system_property_read(pi, NULL, value);
+	callback(cookie, pi->name, value, 0);
 }
 
 // actually misc stuff
