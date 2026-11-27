@@ -1166,9 +1166,6 @@ apkenv_load_segments(int fd, void *header, soinfo *si)
 	size_t extra_len;
 	size_t total_sz = 0;
 
-	si->wrprotect_start = 0xffffffff;
-	si->wrprotect_end = 0;
-
 	TRACE("[ %5d - Begin loading segments for '%s' @ 0x%016lx ]\n",
 	      apkenv_pid, si->name, (intptr_t)si->base);
 	/* Now go through all the PT_LOAD segments and map them into memory
@@ -1279,18 +1276,12 @@ apkenv_load_segments(int fd, void *header, soinfo *si)
 			      (uint64_t)pbase, len, phdr->p_vaddr, phdr->p_offset);
 			total_sz += len;
 			/* Make the section writable just in case we'll have to write to
-			 * it during relocation (i.e. text segment). However, we will
-			 * remember what range of addresses should be write protected.
-			 *
+			 * it during relocation (i.e. text segment). apkenv_link_image
+			 * write-protects it again afterwards.
 			 */
-			if (!(phdr->p_flags & PF_W)) {
-				if ((intptr_t)pbase < si->wrprotect_start)
-					si->wrprotect_start = (intptr_t)pbase;
-				if (((intptr_t)pbase + len) > si->wrprotect_end)
-					si->wrprotect_end = (intptr_t)pbase + len;
+			if (!(phdr->p_flags & PF_W))
 				mprotect(pbase, len,
 					 PFLAGS_TO_PROT(phdr->p_flags) | PROT_WRITE);
-			}
 		} else if (phdr->p_type == PT_DYNAMIC) {
 			DEBUG_DUMP_PHDR(phdr, "PT_DYNAMIC", apkenv_pid);
 			/* this segment contains the dynamic linking information */
@@ -2886,16 +2877,19 @@ static int apkenv_link_image(soinfo *si, /*unused...?*/ unsigned wr_offset)
 	mprotect((void*) si->base, wr_offset, PROT_READ | PROT_EXEC);
 }
 #else
-	/* TODO: Verify that this does the right thing in all cases, as it
-	 * presently probably does not. It is possible that an ELF image will
-	 * come with multiple read-only segments. What we ought to do is scan
-	 * the program headers again and mprotect all the read-only segments.
-	 * To prevent re-scanning the program header, we would have to build a
-	 * list of loadable segments in si, and then scan that instead. */
-	if (si->wrprotect_start != 0xffffffff && si->wrprotect_end != 0) {
-		mprotect((void *)(intptr_t)si->wrprotect_start,
-			 si->wrprotect_end - si->wrprotect_start,
-			 PROT_READ | PROT_EXEC);
+	/* apkenv_load_segments made the read-only segments writable for the
+	 * relocations; give each of them its own protection back. The range
+	 * kept in wrprotect_start/end is 32 bits wide and never matched a
+	 * 64-bit address, so code stayed writable (rwxp in /proc/self/maps). */
+	phdr = si->phdr;
+	for (phnum = si->phnum; phnum > 0; --phnum, ++phdr) {
+		if (phdr->p_type != PT_LOAD || (phdr->p_flags & PF_W))
+			continue;
+		ElfW(Addr) start = (si->base + phdr->p_vaddr) & ~PAGE_MASK;
+		ElfW(Addr) end = (si->base + phdr->p_vaddr + phdr->p_memsz + PAGE_SIZE - 1) & ~PAGE_MASK;
+		if (mprotect((void *)start, end - start, PFLAGS_TO_PROT(phdr->p_flags)) < 0)
+			DL_ERR("%5d could not write-protect a segment of '%s': %d (%s)",
+			       apkenv_pid, si->name, errno, strerror(errno));
 	}
 #endif
 
